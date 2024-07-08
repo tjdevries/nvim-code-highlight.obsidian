@@ -1,0 +1,24 @@
+{
+	"formatter": {
+		"include": ["main.ts"]
+	},
+	"css": {
+		"formatter": {
+			"enabled": true
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"style": {
+				"useTemplate": "off",
+				"useConst": "off",
+				"noNonNullAssertion": "off"
+			},
+			"complexity": {
+				"noForEach": "off"
+			}
+		}
+	}
+}
