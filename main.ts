@@ -37,6 +37,14 @@ function extensionToFiletype(extension: string) {
 	return extension;
 }
 
+function filetypeToExtension(filetype: string) {
+	if (filetype === "ocaml") {
+		return "ml";
+	}
+
+	return filetype;
+}
+
 function captureStderr(command: string, args: string[]): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const child = spawn(command, args);
@@ -163,8 +171,93 @@ export default class MyPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: "transform-to-neovim-blocks",
+			name: "Transform all code blocks to neovim blocks",
+			callback: () => {
+				this.transformAllCodeBlocksToNeovimBlocks();
+			},
+		});
+
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		// this.addSettingTab(new SampleSettingTab(this.app, this));
+	}
+
+	async transformAllCodeBlocksToNeovimBlocks() {
+		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		console.log(view);
+		// const position = view?.editor.getCursor();
+
+		const file = this.app.workspace.getActiveFile();
+		if (!file) {
+			return;
+		}
+
+		const activeFile = this.app.workspace.getActiveFile();
+		if (!activeFile) return [];
+
+		const fileCache = this.app.metadataCache.getFileCache(activeFile);
+		if (!fileCache) return [];
+
+		const contents = await this.app.vault.read(file);
+		const lines: string[] = contents.split("\n");
+
+		const sections = fileCache.sections!;
+		const toTransform = [];
+		for (const s of sections) {
+			if (s.type === "code") {
+				const first_line = lines[s.position.start.line];
+				if (first_line.includes("neovim")) {
+					continue;
+				}
+
+				toTransform.push(s);
+			}
+		}
+
+		// Go back to front so we can modify lines
+		toTransform.reverse();
+
+		const config: NeovimIncludeConfig = { update: true };
+
+		let i = 0;
+		for (const s of toTransform) {
+			const first_line = lines[s.position.start.line];
+			const extension = filetypeToExtension(
+				first_line.slice(first_line.indexOf("```") + 3).trim(),
+			);
+			console.log(s.position.start, s.position.end, extension);
+			// if (true) {
+			// 	continue;
+			// }
+
+			const blockContents = lines
+				.slice(s.position.start.line + 1, s.position.end.line)
+				.join("\n");
+
+			const now = Date.now();
+			const newFileName = `${now}${i}.${extension}`;
+			await this.app.vault.create(`_/code/${newFileName}`, blockContents);
+
+			const newLines = [
+				`${NEOVIM_START_FLAG} ${newFileName} ${JSON.stringify(config)} %%`,
+				"```neovim",
+				"```",
+				`^${now}`,
+			];
+
+			// Replace the lines
+			lines.splice(
+				s.position.start.line,
+				s.position.end.line - s.position.start.line + 1,
+				...newLines,
+			);
+
+			i += 1;
+		}
+
+		this.app.vault.modify(file, lines.join("\n"));
+		await this.updateNeovimHighlightBlocksCommand();
 	}
 
 	async generateNewNeovimHighlightBlock(config: NeovimIncludeConfig) {
@@ -282,7 +375,6 @@ export default class MyPlugin extends Plugin {
 		]);
 
 		let outputLines = output.split("\n");
-		console.log("output", outputLines);
 
 		let outputNeovim = "";
 
