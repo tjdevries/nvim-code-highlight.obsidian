@@ -15,6 +15,10 @@ interface MyPluginSettings {
 	mySetting: string;
 }
 
+interface NeovimIncludeConfig {
+	update: boolean;
+}
+
 const DEFAULT_SETTINGS: MyPluginSettings = {
 	mySetting: "default",
 };
@@ -139,7 +143,15 @@ export default class MyPlugin extends Plugin {
 			id: "generate-include-neovim-block",
 			name: "Generate a new INCLUDE NEOVIM block with new file",
 			callback: () => {
-				this.generateNewNeovimHighlightBlock();
+				this.generateNewNeovimHighlightBlock({ update: true });
+			},
+		});
+
+		this.addCommand({
+			id: "generate-include-neovim-block-no-update",
+			name: "Generate a new, no-update INCLUDE NEOVIM block with new file.",
+			callback: () => {
+				this.generateNewNeovimHighlightBlock({ update: false });
 			},
 		});
 
@@ -155,7 +167,7 @@ export default class MyPlugin extends Plugin {
 		// this.addSettingTab(new SampleSettingTab(this.app, this));
 	}
 
-	async generateNewNeovimHighlightBlock() {
+	async generateNewNeovimHighlightBlock(config: NeovimIncludeConfig) {
 		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 		const position = view?.editor.getCursor();
 
@@ -169,14 +181,15 @@ export default class MyPlugin extends Plugin {
 				return;
 			}
 
-			const newFileName = `${Date.now()}.${extension}`;
+			const now = Date.now();
+			const newFileName = `${now}.${extension}`;
 			await this.app.vault.create(`_/code/${newFileName}`, "");
 
 			const newLines = [
-				NEOVIM_START_FLAG + " " + newFileName + " %%",
+				`${NEOVIM_START_FLAG} ${newFileName} ${JSON.stringify(config)} %%`,
 				"```neovim",
-				"<pre>EDIT THE FILE</pre>",
 				"```",
+				`^${now}`,
 			];
 
 			view.editor!.setLine(position.line, newLines.join("\n"));
@@ -189,10 +202,24 @@ export default class MyPlugin extends Plugin {
 	}
 
 	getNeovimFile(line: string): TFile | null {
-		const name = line
-			.substring(NEOVIM_START_FLAG.length, line.length - 3)
+		const remaining = line
+			.substring(NEOVIM_START_FLAG.length, line.length)
 			.trim();
+
+		const name = remaining.split(/\s+/)[0].trim();
 		return this.app.metadataCache.getFirstLinkpathDest(name, "");
+	}
+
+	getNeovimConfig(line: string): NeovimIncludeConfig {
+		const remaining = line
+			.substring(NEOVIM_START_FLAG.length, line.length)
+			.trim();
+
+		try {
+			return JSON.parse(remaining.split(/\s+/).slice(1, -1).join(" "));
+		} catch {
+			return { update: true };
+		}
 	}
 
 	fileToPath(file: TFile): string {
@@ -239,6 +266,12 @@ export default class MyPlugin extends Plugin {
 			return i;
 		}
 
+		const config = this.getNeovimConfig(line);
+		if (!config.update) {
+			console.log("Not updating due to config:", line);
+			return i;
+		}
+
 		const absolutePath = this.fileToPath(resolved);
 		const output = await captureStderr("nvim", [
 			"--headless",
@@ -270,7 +303,7 @@ export default class MyPlugin extends Plugin {
 		console.log("neovim", outputNeovim);
 
 		const new_lines = [outputNeovim.trim()];
-		lines.splice(i + 1, offset, ...new_lines);
+		lines.splice(i + 1, offset - 1, ...new_lines);
 		this.app.vault.modify(file, lines.join("\n"));
 
 		console.log("Finished neovim highlight", i);
