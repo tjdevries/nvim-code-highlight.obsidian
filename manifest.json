@@ -1,11 +1,12 @@
 {
-	"id": "obsidian-code-include",
-	"name": "Obsidian Code Include",
+	"id": "nvim-code-highlight",
+	"name": "Neovim Code Blocks",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Includes code, useful for publish",
+	"description": "Highlight Obsidian code blocks with Neovim's :TOHtml",
 	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
-	"isDesktopOnly": false
+	"authorUrl": "x.com/teej_dv",
+	"fundingUrl": "https://github.com/sponsors/tjdevries",
+	"manifest_version": 2,
+	"isDesktopOnly": true
 }

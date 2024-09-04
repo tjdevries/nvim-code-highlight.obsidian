@@ -1,6 +1,13 @@
 // biome-ignore lint/style/useNodejsImportProtocol: <explanation>
 import { spawn } from "child_process";
-import { type App, Modal, Plugin, MarkdownView, type TFile } from "obsidian";
+import {
+	type App,
+	Modal,
+	Plugin,
+	MarkdownView,
+	type TFile,
+	Notice,
+} from "obsidian";
 
 // biome-ignore lint/suspicious/noEmptyInterface: <explanation>
 interface NeovimHighlightSettings {}
@@ -78,7 +85,7 @@ export default class NeovimHighlighter extends Plugin {
 
 		this.addCommand({
 			id: "update-include-neovim-blocks",
-			name: "Update Neovim Code Blocks",
+			name: "Update File",
 			callback: () => {
 				this.updateNeovimHighlights();
 			},
@@ -86,7 +93,7 @@ export default class NeovimHighlighter extends Plugin {
 
 		this.addCommand({
 			id: "generate-include-neovim-block",
-			name: "Generate Neovim Code Block",
+			name: "Generate",
 			callback: () => {
 				this.generateNewNeovimHighlightBlock(true);
 			},
@@ -94,7 +101,7 @@ export default class NeovimHighlighter extends Plugin {
 
 		this.addCommand({
 			id: "generate-include-neovim-block-no-update",
-			name: "Generate Neovim Code Block (no update)",
+			name: "Generate (no update)",
 			callback: () => {
 				this.generateNewNeovimHighlightBlock(false);
 			},
@@ -102,7 +109,7 @@ export default class NeovimHighlighter extends Plugin {
 
 		this.addCommand({
 			id: "edit-neovim-block",
-			name: "Edit a Neovim Code block",
+			name: "Edit",
 			callback: () => {
 				this.editNeovimHighlightBlockInNeovim();
 			},
@@ -276,6 +283,7 @@ export default class NeovimHighlighter extends Plugin {
 		// Go back to front so we can modify lines
 		toTransform.reverse();
 
+		let updated = 0;
 		for (const s of toTransform) {
 			const first_line = lines[s.position.start.line];
 			const config = this.getNeovimConfig(first_line);
@@ -348,9 +356,13 @@ export default class NeovimHighlighter extends Plugin {
 				s.position.end.line - s.position.start.line + 1 + startOffset,
 				...new_lines,
 			);
+
+			updated += 1;
 		}
 
 		this.app.vault.modify(file, lines.join("\n"));
+
+		new Notice(`Neovim has completed updating ${updated} code blocks`, 3000);
 	}
 
 	async editNeovimHighlightBlockInNeovim() {
