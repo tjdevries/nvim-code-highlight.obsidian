@@ -1,45 +1,38 @@
 // biome-ignore lint/style/useNodejsImportProtocol: <explanation>
 import { spawn } from "child_process";
-import {
-	type App,
-	Modal,
-	Plugin,
-	MarkdownView,
-	FuzzySuggestModal,
-	type TFile,
-} from "obsidian";
+import { type App, Modal, Plugin, MarkdownView, type TFile } from "obsidian";
 
-// Remember to rename these classes and interfaces!
+// biome-ignore lint/suspicious/noEmptyInterface: <explanation>
+interface NeovimHighlightSettings {}
 
-interface MyPluginSettings {
-	mySetting: string;
-}
-
-interface NeovimIncludeConfig {
+interface NeovimFileConfig {
+	path: string;
 	update: boolean;
+	timestamp: number;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: "default",
-};
+const DEFAULT_SETTINGS: NeovimHighlightSettings = {};
 
-const REFRESHED_TIMES: Map<string, number> = new Map();
-const FILE_START_FLAG = "%% START CODE:";
-const FILE_END_FLAG = "%% END CODE %%";
-
+// TODO: Once we've migrated all my files, can probably delete this section,
+// but it's OK to leave for now. The new way is better.
 const NEOVIM_START_FLAG = "%% INCLUDE NEOVIM:";
 
-function extensionToFiletype(extension: string) {
-	if (extension === "ml") {
-		return "ocaml";
-	}
-
-	return extension;
-}
-
 function filetypeToExtension(filetype: string) {
-	if (filetype === "ocaml") {
-		return "ml";
+	switch (filetype) {
+		case "ocaml":
+			return "ml";
+		case "html":
+			return "html";
+		case "css":
+			return "css";
+		case "javascript":
+			return "js";
+		case "typescript":
+			return "ts";
+		case "markdown":
+			return "md";
+		case "latex":
+			return "tex";
 	}
 
 	return filetype;
@@ -69,13 +62,13 @@ function captureStderr(command: string, args: string[]): Promise<string> {
 	});
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class NeovimHighlighter extends Plugin {
+	settings: NeovimHighlightSettings;
 
 	async onload() {
 		await this.loadSettings();
 
-		// TODO: Would be good to double check all the times on startup, but who cares LUL
+		// All `neovim` code blocks are actually just HTML :omegalul:
 		this.registerMarkdownCodeBlockProcessor(
 			"neovim",
 			async (content, el, _ctx) => {
@@ -83,89 +76,33 @@ export default class MyPlugin extends Plugin {
 			},
 		);
 
-		this.registerEvent(
-			this.app.vault.on("modify", async (file: TFile) => {
-				const text = await this.app.vault.read(file);
-				const lines: string[] = text.split("\n");
-				for (let i = 0; i < lines.length; i++) {
-					const line = lines[i];
-					if (line.includes(FILE_START_FLAG)) {
-						const offset = lines.slice(i).indexOf(FILE_END_FLAG)!;
-
-						let name = line
-							.substring(FILE_START_FLAG.length, line.length - 3)
-							.trim();
-						name = name.substring(2, name.length - 2);
-
-						const resolved = this.app.metadataCache.getFirstLinkpathDest(
-							name,
-							"",
-						);
-						const last_refreshed = REFRESHED_TIMES.get(name) || 0;
-						if (resolved && last_refreshed < resolved.stat.mtime) {
-							// Update the refreshed times
-							REFRESHED_TIMES.set(name, resolved.stat.mtime);
-
-							const contents = await this.app.vault.read(resolved);
-							const new_lines = [
-								"```" + extensionToFiletype(resolved.extension),
-								contents.trim(),
-								"```",
-								FILE_END_FLAG,
-							];
-							lines.splice(i + 1, offset, ...new_lines);
-							this.app.vault.modify(file, lines.join("\n"));
-						}
-					}
-				}
-			}),
-		);
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: "add-code-include",
-			name: "Add a CODE INCLUDE block",
-			callback: () => {
-				//@ts-ignore
-				new CodeIncluderModal(this.app).open();
-			},
-		});
-
 		this.addCommand({
 			id: "update-include-neovim-blocks",
-			name: "Update INCLUDE NEOVIM blocks",
+			name: "Update Neovim Code Blocks",
 			callback: () => {
-				this.updateNeovimHighlightBlocksCommand();
-			},
-		});
-
-		this.addCommand({
-			id: "create-include-neovim-block",
-			name: "Create INCLUDE NEOVIM block",
-			callback: () => {
-				createNeovimHighlightBlock(this);
+				this.updateNeovimHighlights();
 			},
 		});
 
 		this.addCommand({
 			id: "generate-include-neovim-block",
-			name: "Generate a new INCLUDE NEOVIM block with new file",
+			name: "Generate Neovim Code Block",
 			callback: () => {
-				this.generateNewNeovimHighlightBlock({ update: true });
+				this.generateNewNeovimHighlightBlock(true);
 			},
 		});
 
 		this.addCommand({
 			id: "generate-include-neovim-block-no-update",
-			name: "Generate a new, no-update INCLUDE NEOVIM block with new file.",
+			name: "Generate Neovim Code Block (no update)",
 			callback: () => {
-				this.generateNewNeovimHighlightBlock({ update: false });
+				this.generateNewNeovimHighlightBlock(false);
 			},
 		});
 
 		this.addCommand({
 			id: "edit-neovim-block",
-			name: "Edit a NEOVIM block",
+			name: "Edit a Neovim Code block",
 			callback: () => {
 				this.editNeovimHighlightBlockInNeovim();
 			},
@@ -173,34 +110,24 @@ export default class MyPlugin extends Plugin {
 
 		this.addCommand({
 			id: "transform-to-neovim-blocks",
-			name: "Transform all code blocks to neovim blocks",
+			name: "Transform All Code Blocks to Neovim Code Blocks",
 			callback: () => {
 				this.transformAllCodeBlocksToNeovimBlocks();
 			},
 		});
-
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		// this.addSettingTab(new SampleSettingTab(this.app, this));
 	}
 
 	async transformAllCodeBlocksToNeovimBlocks() {
-		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-		console.log(view);
-		// const position = view?.editor.getCursor();
-
 		const file = this.app.workspace.getActiveFile();
 		if (!file) {
 			return;
 		}
 
-		const activeFile = this.app.workspace.getActiveFile();
-		if (!activeFile) return [];
-
-		const fileCache = this.app.metadataCache.getFileCache(activeFile);
-		if (!fileCache) return [];
-
 		const contents = await this.app.vault.read(file);
 		const lines: string[] = contents.split("\n");
+
+		const activeFile = this.app.workspace.getActiveFile()!;
+		const fileCache = this.app.metadataCache.getFileCache(activeFile)!;
 
 		const sections = fileCache.sections!;
 		const toTransform = [];
@@ -218,33 +145,28 @@ export default class MyPlugin extends Plugin {
 		// Go back to front so we can modify lines
 		toTransform.reverse();
 
-		const config: NeovimIncludeConfig = { update: true };
-
 		let i = 0;
 		for (const s of toTransform) {
 			const first_line = lines[s.position.start.line];
 			const extension = filetypeToExtension(
 				first_line.slice(first_line.indexOf("```") + 3).trim(),
 			);
-			console.log(s.position.start, s.position.end, extension);
-			// if (true) {
-			// 	continue;
-			// }
 
 			const blockContents = lines
 				.slice(s.position.start.line + 1, s.position.end.line)
 				.join("\n");
 
-			const now = Date.now();
-			const newFileName = `${now}${i}.${extension}`;
-			await this.app.vault.create(`_/code/${newFileName}`, blockContents);
+			const now = `${Date.now()}${i}`;
+			const newFileName = `${now}.${extension}`;
+			const newFilePath = `_/code/${newFileName}`;
+			await this.app.vault.create(newFilePath, blockContents);
 
-			const newLines = [
-				`${NEOVIM_START_FLAG} ${newFileName} ${JSON.stringify(config)} %%`,
-				"```neovim",
-				"```",
-				`^${now}`,
-			];
+			const config: NeovimFileConfig = {
+				update: true,
+				path: newFilePath,
+				timestamp: Date.now(),
+			};
+			const newLines = this.getNeovimBlockLines(now, config);
 
 			// Replace the lines
 			lines.splice(
@@ -257,10 +179,10 @@ export default class MyPlugin extends Plugin {
 		}
 
 		this.app.vault.modify(file, lines.join("\n"));
-		await this.updateNeovimHighlightBlocksCommand();
+		await this.updateNeovimHighlights();
 	}
 
-	async generateNewNeovimHighlightBlock(config: NeovimIncludeConfig) {
+	async generateNewNeovimHighlightBlock(update: boolean) {
 		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
 		const position = view?.editor.getCursor();
 
@@ -269,21 +191,18 @@ export default class MyPlugin extends Plugin {
 			return;
 		}
 
-		const input = new TextModal(this.app, async (extension: string) => {
+		const input = new NewCodeFileModal(this.app, async (extension: string) => {
 			if (!position || extension === "") {
 				return;
 			}
 
-			const now = Date.now();
+			const now = `${Date.now()}`;
 			const newFileName = `${now}.${extension}`;
-			await this.app.vault.create(`_/code/${newFileName}`, "");
+			const newFilePath = `_/code/${newFileName}`;
+			await this.app.vault.create(newFilePath, "");
 
-			const newLines = [
-				`${NEOVIM_START_FLAG} ${newFileName} ${JSON.stringify(config)} %%`,
-				"```neovim",
-				"```",
-				`^${now}`,
-			];
+			const config = { update, path: newFilePath, timestamp: Date.now() };
+			const newLines = this.getNeovimBlockLines(now, config);
 
 			view.editor!.setLine(position.line, newLines.join("\n"));
 			view.editor!.setCursor(position);
@@ -292,6 +211,10 @@ export default class MyPlugin extends Plugin {
 		});
 
 		input.open();
+	}
+
+	getNeovimBlockLines(id: string, config: NeovimFileConfig): string[] {
+		return ["```neovim " + JSON.stringify(config), "```", `^${id}`];
 	}
 
 	getNeovimFile(line: string): TFile | null {
@@ -303,7 +226,7 @@ export default class MyPlugin extends Plugin {
 		return this.app.metadataCache.getFirstLinkpathDest(name, "");
 	}
 
-	getNeovimConfig(line: string): NeovimIncludeConfig {
+	getNeovimConfig(line: string): NeovimFileConfig {
 		const remaining = line
 			.substring(NEOVIM_START_FLAG.length, line.length)
 			.trim();
@@ -311,7 +234,12 @@ export default class MyPlugin extends Plugin {
 		try {
 			return JSON.parse(remaining.split(/\s+/).slice(1, -1).join(" "));
 		} catch {
-			return { update: true };
+			try {
+				const neovimRemaining = line.split("```neovim")[1];
+				return JSON.parse(neovimRemaining);
+			} catch {
+				return { update: true, path: "", timestamp: 0 };
+			}
 		}
 	}
 
@@ -321,124 +249,150 @@ export default class MyPlugin extends Plugin {
 		return `${basePath}/${file.path}`;
 	}
 
-	async updateNeovimHighlightBlocksCommand() {
-		// get current file:
+	async updateNeovimHighlights(force = false) {
 		const file = this.app.workspace.getActiveFile();
 		if (!file) {
 			return;
 		}
 
+		const fileCache = this.app.metadataCache.getFileCache(file)!;
+
 		const text = await this.app.vault.read(file);
 		const lines: string[] = text.split("\n");
-		for (let i = 0; i < lines.length; i++) {
-			await this.updateNeovimHighlightBlock(file, i, lines);
-		}
-	}
 
-	async updateNeovimHighlightBlock(
-		file: TFile,
-		i: number,
-		lines: string[],
-	): Promise<number> {
-		const line = lines[i];
-		if (!line.includes(NEOVIM_START_FLAG)) {
-			return i;
-		}
-		console.log("Starting neovim highlight");
+		const sections = fileCache.sections!;
+		const toTransform = [];
+		for (const s of sections) {
+			if (s.type === "code") {
+				const first_line = lines[s.position.start.line];
+				if (!first_line.includes("neovim")) {
+					continue;
+				}
 
-		let offset = 0;
-		if (lines[i + 1] !== "```neovim") {
-			offset = 0;
-		} else {
-			offset = lines.slice(i - 1).indexOf("```")!;
-		}
-
-		const resolved = this.getNeovimFile(line);
-		if (!resolved) {
-			console.log("Could not find file", line);
-			return i;
-		}
-
-		const config = this.getNeovimConfig(line);
-		if (!config.update) {
-			console.log("Not updating due to config:", line);
-			return i;
-		}
-
-		const absolutePath = this.fileToPath(resolved);
-		const output = await captureStderr("nvim", [
-			"--headless",
-			"-c",
-			`RunObsidian ${absolutePath}`,
-			"-c",
-			"q",
-		]);
-
-		let outputLines = output.split("\n");
-
-		let outputNeovim = "";
-
-		let recording = false;
-		for (const line of outputLines) {
-			if (line === "```neovim") {
-				recording = true;
-			} else if (line.startsWith("```")) {
-				outputNeovim += "```\n";
-				break;
-			}
-
-			if (recording) {
-				outputNeovim += line + "\n";
+				toTransform.push(s);
 			}
 		}
 
-		console.log("neovim", outputNeovim);
+		// Go back to front so we can modify lines
+		toTransform.reverse();
 
-		const new_lines = [outputNeovim.trim()];
-		lines.splice(i + 1, offset - 1, ...new_lines);
+		for (const s of toTransform) {
+			const first_line = lines[s.position.start.line];
+			const config = this.getNeovimConfig(first_line);
+
+			const possibleStartFlag = s.position.start.line - 1;
+			let startOffset = 0;
+			if (lines[possibleStartFlag].includes(NEOVIM_START_FLAG)) {
+				startOffset += 1;
+
+				if (config.path === "") {
+					config.path = this.getNeovimFile(lines[possibleStartFlag])!.path;
+				}
+			}
+
+			const path = config.path;
+			if (!path) {
+				console.log("Could not find file", config, first_line, s.position);
+				continue;
+			}
+
+			if (!config.update) {
+				console.log("Not updating due to config:", first_line);
+				continue;
+			}
+
+			const f = this.app.vault.getAbstractFileByPath(config.path) as TFile;
+			if (!force && config.timestamp > f.stat.mtime) {
+				console.log("Not updating due to timestamp:", config, f.stat);
+				continue;
+			}
+
+			// Update the time
+			config.timestamp = Date.now();
+			console.log("updating:", first_line, config);
+
+			const resolved = this.app.vault.getAbstractFileByPath(path) as TFile;
+			const absolutePath = this.fileToPath(resolved);
+			const output = await captureStderr("nvim", [
+				"--headless",
+				"-c",
+				`RunObsidian ${absolutePath}`,
+				"-c",
+				"q",
+			]);
+
+			let outputLines = output.split("\n");
+
+			let outputNeovim = "";
+
+			let recording = false;
+			for (const line of outputLines) {
+				if (line === "```neovim") {
+					recording = true;
+				} else if (line.startsWith("```")) {
+					outputNeovim += "```\n";
+					break;
+				}
+
+				if (recording) {
+					outputNeovim += line + "\n";
+				}
+			}
+
+			// console.log("neovim", outputNeovim);
+
+			const new_lines = outputNeovim.trim().split("\n");
+			new_lines[0] += ` ${JSON.stringify(config)}`;
+			lines.splice(
+				s.position.start.line - startOffset,
+				s.position.end.line - s.position.start.line + 1 + startOffset,
+				...new_lines,
+			);
+		}
+
 		this.app.vault.modify(file, lines.join("\n"));
-
-		console.log("Finished neovim highlight", i);
-		return i + new_lines.length;
 	}
 
 	async editNeovimHighlightBlockInNeovim() {
-		// throw new Error('Method not implemented.');
 		console.log("edit neovim");
 
-		let editor = this.app.workspace.activeEditor?.editor!;
-		let cursor = editor.getCursor();
-		let line = editor.getLine(cursor.line);
-
-		const file = this.getNeovimFile(line);
+		const file = this.app.workspace.getActiveFile();
 		if (!file) {
-			console.log("Could not find file:", line);
 			return;
 		}
 
-		let absolutePath = this.fileToPath(file);
+		let editor = this.app.workspace.activeEditor?.editor!;
+		let cursor = editor.getCursor();
 
-		// TODO: Later it would be cool to add an option to our INCLUDE expression to mention
-		// that we generated highlights from interactive Neovim (so that we don't override them
-		// later when we do the INCLUDE plugin normally).
-		console.log("opening neovim", absolutePath);
-		await captureStderr("ghostty", [
-			"-e",
-			"nvim",
-			"-c",
-			`"EditObsidian ${absolutePath}"`,
-		]);
+		const fileCache = this.app.metadataCache.getFileCache(file)!;
+		const sections = fileCache.sections!;
+		for (const s of sections) {
+			if (
+				s.position.start.line <= cursor.line &&
+				s.position.end.line >= cursor.line
+			) {
+				const first_line = editor.getLine(s.position.start.line);
+				const config = this.getNeovimConfig(first_line);
+				console.log("config", config);
+				const resolved = this.app.vault.getAbstractFileByPath(
+					config.path!,
+				) as TFile;
 
-		let activeFile = this.app.workspace.getActiveFile()!;
-		let activeFileContents = await this.app.vault.read(activeFile);
-		this.updateNeovimHighlightBlock(
-			activeFile,
-			cursor.line,
-			activeFileContents.split("\n"),
-		);
+				let absolutePath = this.fileToPath(resolved);
+
+				await captureStderr("ghostty", [
+					"-e",
+					"nvim",
+					"-c",
+					`"EditObsidian ${absolutePath}"`,
+				]);
+
+				this.updateNeovimHighlights();
+
+				return;
+			}
+		}
 	}
-
-	onunload() {}
 
 	async loadSettings() {
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -447,34 +401,11 @@ export default class MyPlugin extends Plugin {
 	async saveSettings() {
 		await this.saveData(this.settings);
 	}
+
+	onunload() {}
 }
 
-class CodeIncluderModal extends FuzzySuggestModal<TFile> {
-	getItems(): TFile[] {
-		return this.app.vault.getFiles();
-	}
-	/**
-	 * @public
-	 */
-	getItemText(item: TFile): string {
-		return item.name;
-	}
-	/**
-	 * @public
-	 */
-	onChooseItem(item: TFile, _evt: MouseEvent | KeyboardEvent): void {
-		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-		view?.editor.replaceSelection(
-			[FILE_START_FLAG + " [[" + item.path + "]] %%", FILE_END_FLAG].join("\n"),
-		);
-	}
-}
-
-async function createNeovimHighlightBlock(plugin: MyPlugin) {
-	new NeovimIncludeModal(plugin.app).open();
-}
-
-class TextModal extends Modal {
+class NewCodeFileModal extends Modal {
 	inputValue: string;
 	customSubmit: (value: string) => Promise<void>;
 
@@ -501,28 +432,5 @@ class TextModal extends Modal {
 
 	onClose(): void {
 		this.customSubmit(this.inputValue);
-	}
-}
-
-class NeovimIncludeModal extends FuzzySuggestModal<TFile> {
-	getItems(): TFile[] {
-		return this.app.vault.getFiles().filter((file) => file.extension !== "md");
-	}
-
-	/**
-	 * @public
-	 */
-	getItemText(item: TFile): string {
-		return item.name;
-	}
-
-	/**
-	 * @public
-	 */
-	onChooseItem(item: TFile, _evt: MouseEvent | KeyboardEvent): void {
-		const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-		view?.editor.replaceSelection(
-			[FILE_START_FLAG + " [[" + item.path + "]] %%", FILE_END_FLAG].join("\n"),
-		);
 	}
 }

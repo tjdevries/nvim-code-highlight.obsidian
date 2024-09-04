@@ -1,5 +1,5 @@
-# Obsidian Include Code
+# Obsidian: Neovim Highlighter
 
-You can do `Obsidian Code Include: Add a CODE INCLUDE Block` to make use of this :)
+Neovim can emit HTML.
 
-you might have to edit the buffer to trigger the update.
+Let's use it to make beautifully styled HTML blocks in Obsidian.
